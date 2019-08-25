@@ -15,7 +15,7 @@ if [[ -z $PB1_ADM || -z $PB1_BRC || -z $PB1_TIMEZONE || -z $PB1_HOST || -z $PB1_
     exit 1
 fi
 
-if [[ -z $PB1_BOT_CLID || -z $PB1_BOT_CLSEC || -z $PB1_SHRD_CLID ]]; then
+if [[ -z $PB1_BOT_CLID || -z $PB1_BOT_CLSEC ]]; then
     echo "No credentials specified."
     exit 1
 fi
@@ -47,6 +47,11 @@ else
     PB1_WS_PROTO="wss"
 fi
 
+if [ $DEVMODE == "true" ]
+then
+    echo "Dev mode enabled"
+fi
+
 #Validate Sudo
 sudo touch /tmp/sudotag
 if [ ! -f /tmp/sudotag ]; then
@@ -54,76 +59,42 @@ if [ ! -f /tmp/sudotag ]; then
     exit 1
 fi
 
-#Get OAuth token for the broadcaster from the user
-if [ -z "$PB1_BRC_OAUTH" ]
-then
-PB1_BRC_OAUTH_DEF="4d36fa3cc5c0547c60e9c524ba03dd"
-read -rp "Ask the broadcaster to open the following url:
-https://id.twitch.tv/oauth2/authorize?client_id=$PB1_BOT_CLID&redirect_uri=https://twitchapps.com/tmi/&response_type=token&scope=channel_subscriptions+channel_editor
-and input the received oauth key without the oauth: part into this prompt and press enter. If you don't want to do it now, just press enter to skip.  " PB1_BRC_OAUTH
-PB1_BRC_OAUTH="${OUT_PATH:-$PB1_BRC_OAUTH_DEF}"
-fi
+
+#Create pajbot user
+sudo adduser --shell /bin/bash --system --group pajbot
+
+#Allow pajbot account to reload nginx
+echo 'pajbot ALL= NOPASSWD: /bin/systemctl reload nginx' | sudo tee -a /etc/sudoers.d/pajbot
 
 #Create Tempdir for install files
 mkdir ~/pb1tmp
 PB1TMP=$HOME/pb1tmp
 
-#Create pajbot user
-sudo adduser --shell /bin/bash --system --group pajbot
+sudo mkdir /opt/pajbot
+sudo mkdir /opt/pajbot-sock
+sudo chown -R pajbot:pajbot /opt/pajbot
+sudo chown -R pajbot:pajbot /opt/pajbot-sock
 
 #Configure APT and Install Packages
 if [ $ID == "ubuntu" ]; then
 sudo add-apt-repository universe
 fi
 sudo apt update && sudo apt upgrade -y
-sudo apt install mariadb-server redis-server openjdk-8-jre-headless nginx libssl-dev python3 python3-pip python3-venv python3-dev uwsgi uwsgi-plugin-python3 git curl build-essential -y
+sudo apt install mariadb-server redis-server nginx libssl-dev python3 python3-pip python3-venv python3-dev git curl build-essential -y
 
-#Install APIProxy
-sudo mkdir /opt/apiproxy
-sudo curl -L "https://github.com/zwb3/twitch-api-v3-proxy/releases/download/release/twitch-api-v3-proxy-boot.tar" | sudo tar xvf - -C /opt/apiproxy --strip-components=1 --exclude='twitch-api-v3-proxy-boot/application.properties'
-
-cat << EOF > $PB1TMP/application.properties
-logging.level.root=WARN
-logging.level.de.zwb3=DEBUG
-server.address=127.0.0.1
-server.port=7221
-clientId=$PB1_SHRD_CLID
-EOF
-sudo mv $PB1TMP/application.properties /opt/apiproxy/application.properties
-sudo chown -R pajbot:pajbot /opt/apiproxy
-
-#Setup Systemd unit for APIProxy and start the service
-cat << EOF > $PB1TMP/apiproxy.service
-[Unit]
-Description=twitch-api-v3-proxy
-After=network.target
-
-[Service]
-Type=simple
-User=pajbot
-Group=pajbot
-WorkingDirectory=/opt/apiproxy
-ExecStart=/opt/apiproxy/bin/twitch-api-v3-proxy
-RestartSec=1
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo mv $PB1TMP/apiproxy.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable apiproxy.service
-sudo systemctl start apiproxy.service
-
-#Download PB1 and setup venv and deps
-cd $PB1TMP
-git clone https://github.com/pajbot/pajbot.git
-cd pajbot
+#Download PB1 and set it up
+cat << 'EOF' > /tmp/pb1_inst.sh
+cd /opt/pajbot
+git clone https://github.com/pajbot/pajbot .
+mkdir configs
 python3 -m venv venv
 source ./venv/bin/activate
 python3 -m pip install wheel
 python3 -m pip install -r requirements.txt
+EOF
+sudo chmod 777 /tmp/pb1_inst.sh
+sudo su - pajbot -c "bash /tmp/pb1_inst.sh"
+sudo rm /tmp/pb1_inst.sh
 
 #Setup MySQL User
 sudo mysql -e "CREATE DATABASE $PB1_DB CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";
@@ -190,15 +161,10 @@ quit = {nickname} {version} shutting down...
 ;quit = .emoteonly
 ;    {nickname} {version} shutting down...
 
-[webtwitchapi]
+[twitchapi]
 client_id = $PB1_BOT_CLID
 client_secret = $PB1_BOT_CLSEC
 redirect_uri = $PB1_PROTO://$PB1_HOST/login/authorized
-
-[twitchapi]
-client_id = $PB1_BOT_CLID
-oauth = $PB1_BRC_OAUTH
-update_subscribers = 0
 
 ; you can optionally populate this with twitter access tokens
 ; if you want to be able to interact with twitter.
@@ -224,36 +190,16 @@ host = $PB1_WS_PROTO://$PB1_HOST/clrsocket
 [youtube]
 developer_key = abc
 EOF
-cat << EOF > $PB1TMP/uwsgi_shared.ini
-[uwsgi]
-module = app:app
-
-master = true
-processes = 1
-threads = 1
-workers = 1
-
-uid = pajbot
-gid = pajbot
-
-chmod-socket = 777
-vacuum = true
-die-on-term = true
-
-plugins = python3,router_cache
-
-memory-report = true
-EOF
 
 #Install acme.sh to manage ssl certs
 if [[ $LOCAL_INSTALL = "true" ]]
 then
     echo 'Local install enabled. Do not install acme.sh'
 else
-    if sudo test -f "/root/.acme.sh/acme.sh"; then
+    if sudo test -f "/home/pajbot/.acme.sh/acme.sh"; then
         echo "acme.sh already installed. skip"
     else
-        sudo -S -u root -i /bin/bash -l -c 'curl https://get.acme.sh | sh'
+        sudo su - pajbot -c 'curl https://get.acme.sh | sh'
     fi
 fi
 
@@ -268,7 +214,6 @@ else
         sudo openssl dhparam -out /etc/nginx/dhparam.pem -dsaparam 4096
     fi
 fi
-
 
 if [ $OS_VER == "ubuntu1904" ]
 then
@@ -327,11 +272,18 @@ server {
 }
 EOF
 sudo mkdir -p /var/www/le_root/.well-known/acme-challenge
-sudo chown -R root:www-data /var/www/le_root
+sudo chown -R pajbot:www-data /var/www/le_root
 sudo rm /etc/nginx/sites-enabled/default
 sudo mv $PB1TMP/leissue.conf /etc/nginx/sites-enabled/0000-issuetmp.conf
 sudo systemctl restart nginx
-sudo PB1_HOST=$PB1_HOST -S -u root -i /bin/bash -l -c '/root/.acme.sh/acme.sh --issue -d $PB1_HOST -w /var/www/le_root --reloadcmd "systemctl reload nginx"'
+
+if [[ $DEVMODE = "true" ]]
+then
+ sudo PB1_HOST=$PB1_HOST su pajbot -c '/home/pajbot/.acme.sh/acme.sh --force --staging --issue -d $PB1_HOST -w /var/www/le_root --reloadcmd "sudo systemctl reload nginx"'
+else
+ sudo PB1_HOST=$PB1_HOST su pajbot -c '/home/pajbot/.acme.sh/acme.sh --force --issue -d $PB1_HOST -w /var/www/le_root --reloadcmd "sudo systemctl reload nginx"'
+fi
+
 sudo rm /etc/nginx/sites-enabled/0000-issuetmp.conf
 fi
 
@@ -404,8 +356,8 @@ server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
     server_name $PB1_HOST;
-    ssl_certificate /root/.acme.sh/$PB1_HOST/fullchain.cer;
-    ssl_certificate_key /root/.acme.sh/$PB1_HOST/$PB1_HOST.key;
+    ssl_certificate /home/pajbot/.acme.sh/$PB1_HOST/fullchain.cer;
+    ssl_certificate_key /home/pajbot/.acme.sh/$PB1_HOST/$PB1_HOST.key;
 
     charset utf-8;
 
@@ -504,8 +456,8 @@ server {
     listen 443 ssl http2 default_server;
     listen [::]:443 ssl http2 default_server;
     access_log off;
-    ssl_certificate /root/.acme.sh/$PB1_HOST/fullchain.cer;
-    ssl_certificate_key /root/.acme.sh/$PB1_HOST/$PB1_HOST.key;
+    ssl_certificate /home/pajbot/.acme.sh/$PB1_HOST/fullchain.cer;
+    ssl_certificate_key /home/pajbot/.acme.sh/$PB1_HOST/$PB1_HOST.key;
 
     location / {
         return 404;
@@ -538,7 +490,7 @@ Type=simple
 User=pajbot
 Group=pajbot
 WorkingDirectory=/opt/pajbot
-ExecStart=/usr/bin/uwsgi --ini uwsgi_shared.ini --ini uwsgi_cache.ini --socket /opt/pajbot-sock/%i-web.sock --pyargv "--config configs/%i.ini" --virtualenv venv
+ExecStart=/opt/pajbot/venv/bin/uwsgi --ini uwsgi_shared.ini --socket /opt/pajbot-sock/%i-web.sock --pyargv "--config configs/%i.ini" --virtualenv venv
 RestartSec=2
 Restart=always
 
@@ -564,14 +516,7 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-#Install Bot
-cd $PB1TMP/pajbot
-mkdir configs
-mv $PB1TMP/$PB1_BRC.ini configs/$PB1_BRC.ini
-mv $PB1TMP/uwsgi_shared.ini $PB1TMP/pajbot/
-sudo cp -r $PB1TMP/pajbot /opt/pajbot
-cd /opt/pajbot
-sudo mkdir /opt/pajbot-sock
+sudo mv $PB1TMP/$PB1_BRC.ini /opt/pajbot/configs/$PB1_BRC.ini
 sudo chown pajbot:pajbot /opt/pajbot-sock
 sudo chown -R pajbot:pajbot /opt/pajbot
 
@@ -583,14 +528,13 @@ sleep 2
 sudo systemctl enable pajbot@$PB1_BRC
 sudo systemctl enable pajbot-web@$PB1_BRC
 sudo systemctl start pajbot@$PB1_BRC
-echo 'Waiting 30 seconds for bot to initialize and starting the webui after that.'
-sleep 30
+echo 'Waiting 20 seconds for bot to initialize and starting the webui after that.'
+sleep 20
 sudo systemctl start pajbot-web@$PB1_BRC
 
 #Done
 echo "pajbot1 Installed. Access the web interface in $PB1_PROTO://$PB1_HOST"
 echo "Access $PB1_PROTO://$PB1_HOST/bot_login and login with your bot account."
-echo "Remember to change the Bot application callback URL to $PB1_PROTO://$PB1_HOST/login/authorized or you cannot login to the webui."
 
 sudo rm -rf /tmp/sudotag
 sudo rm -rf $PB1TMP

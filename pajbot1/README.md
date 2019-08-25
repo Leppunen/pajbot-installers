@@ -11,21 +11,16 @@ If you want to run both bots on the same system with local install, use a local 
 
 Run the script from a standard user that has sudo access.
 ***
-Create 2 apps in the Twitch Developer site at <https://dev.twitch.tv/console/apps> and Call them BOTNAME-PB1-Shared and BOTNAME-PB1-Bot or something similar.
+Create an app in the Twitch Developer site at <https://dev.twitch.tv/console/apps> and call it BOTNAME-PB1-Bot or something similar.
 
-Define the callback URL for Shared as <https://twitchapps.com/tmi>
+Define the callback URL for Bot as <https://pb1.example.com/login/authorized> where the domain is your bot's domain or IP address if you use local mode. If local mode is used, use http:// instead of https://
 
-Define the callback URL for Bot as <https://twitchapps.com/tmi>
-
-Set the Bot URL to <https://pb1.example.com/login/authorized> after you have provided the OAuth token in the script later on. Change the domain to your own. If you have a local install, change https to http in the url.
 ***
 Rename pb1install.config.example to pb1install.config and set the following options as instructed.
 
 Set ```PB1_ADM``` as your twitch username. This user will get level 2000 access to the bot.
 
 Set ```PB1_BRC``` as the broadcasters twitch username in lowercase. Bot will join this channel.
-
-Set ```PB1_BOT_OAUTH``` as a chat oauth token you can generate from here: <https://twitchapps.com/tmi> Login with the bot account.
 
 Set ```PB1_TIMEZONE``` as the timezone used by the bot in a format like Europe/Berlin
 
@@ -35,11 +30,9 @@ Set ```PB1_NAME``` as the bot's twitch username. Can be mixed case if the botnam
 
 Set ```PB1_HUB``` as the channel you want to use as the control hub. This is not required if you are not planning to run multiple pajbot1 instances
 
-Set ```PB1_SHRD_CLID``` as the Client ID of the shared application you created before.
-
 Set ```PB1_BOT_CLID``` and ```PB1_BOT_CLSEC``` as the Client ID and Secret from the bot application you created before.
 ***
 
-After install, you can edit the bot config in /opt/pajbot/configs/botname.ini if you want to set more advanced settings.
+After install, you can edit the bot config in /opt/pajbot/configs/streamername.ini if you want to set more advanced settings.
 
-After editing, restart pajbot services with "systemctl restart pajbot@botname" and "systemctl restart pajbot-web@botname"
+After editing, restart pajbot services with "systemctl restart pajbot@streamername" and "systemctl restart pajbot-web@streamername"

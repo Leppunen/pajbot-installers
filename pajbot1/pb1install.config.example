@@ -5,6 +5,5 @@ PB1_TIMEZONE="" #Timezone in TZ format
 PB1_HOST="" #Domain that the web interface will be reachable from.
 PB1_NAME="" #Bot Username
 PB1_HUB="" #PB1 Control Hub. Not required if you only plan to run a single bot instance.
-PB1_SHRD_CLID="" #Shared ClientID
 PB1_BOT_CLID="" #Bot ClientID
 PB1_BOT_CLSEC="" #Bot Client Secret
